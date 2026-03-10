@@ -1,5 +1,6 @@
 #include "MyObject.h"
 #include <portable-file-dialogs.h>
+#include "webbridge/impl/send_frame.h"
 
 void MyObject::foo(const std::string& val)
 {
@@ -13,7 +14,7 @@ bool MyObject::bar()
 	newPod.a = 42;
 	newPod.b = 123456789ULL;
 	pod = newPod;
-	
+
 	return !aBool();
 }
 
@@ -30,6 +31,33 @@ void MyObject::testVectors()
 	strProp = "Vector mit " + std::to_string(fibonacci.size()) + " Fibonacci-Zahlen";
 	counter = static_cast<int>(fibonacci.size());
 	status = Status::Completed;
+}
+
+
+
+void MyObject::transferSingleFrame()
+{
+
+	std::vector<uint8_t> imgdat;
+	imgdat.resize(1024*1024*4);
+	for(int i = 0; i < 1024*1024; i++) {
+		imgdat[i*4] = 255;
+		imgdat[i*4+1] = i%255;
+		imgdat[i*4+2] = (i / 255) % 255;
+		imgdat[i*4+3] = 255;
+	}
+	SharedFrameSender sender(get_webview());
+	sender.send(imgdat.data(), 1024*1024*4, 1024, 1024);
+}
+
+void MyObject::startVideo()
+{
+
+}
+
+void MyObject::stopVideo()
+{
+
 }
 
 void MyObject::throwError()
@@ -51,7 +79,7 @@ std::string MyObject::multiParamTest(
 	numbers = vecValue;
 	status = statusValue;
 	pod = podValue;
-	
+
 	std::string result = "multiParamTest called with: ";
 	result += "int=" + std::to_string(intValue);
 	result += ", bool=" + std::string(boolValue ? "true" : "false");
@@ -60,6 +88,6 @@ std::string MyObject::multiParamTest(
 	result += ", status=" + std::to_string(static_cast<int>(statusValue));
 	result += ", pod.a=" + std::to_string(podValue.a);
 	result += ", pod.b=" + std::to_string(podValue.b);
-	
+
 	return result;
 }

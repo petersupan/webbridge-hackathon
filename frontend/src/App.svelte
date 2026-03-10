@@ -64,6 +64,7 @@
 
   // ============ WEBGPU ============
   let gpuCanvas: HTMLCanvasElement;
+  let testCanvas: HTMLCanvasElement;
   let gpuDevice: GPUDevice | null = null;
   let gpuContext: GPUCanvasContext | null = null;
   let gpuError: string | null = null;
@@ -109,11 +110,36 @@
     }
   }
 
+  function onSharedBufferReceived(event: any) {
+    const meta = event.additionalData;
+    const buffer = event.getBuffer();
+    const pixels = new Uint8Array(buffer, 0, meta.byteLength);
+
+    // TODO: Bilddaten verarbeiten, z.B. auf Canvas zeichnen:
+    const imageData = new ImageData(
+      new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength),
+      meta.width, meta.height
+    );
+    const ctx = testCanvas.getContext('2d');
+    if (ctx) {
+      testCanvas.width = meta.width;
+      testCanvas.height = meta.height;
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    log(`SharedBuffer received: ${meta.width}x${meta.height} ${meta.format} (${meta.byteLength} bytes)`, 'info');
+
+    // Buffer nach Verwendung freigeben
+    event.source.close();
+  }
+
   onMount(() => {
     initWebGPU();
+    (window as any).chrome?.webview?.addEventListener('sharedbufferreceived', onSharedBufferReceived);
   });
 
   onDestroy(() => {
+    (window as any).chrome?.webview?.removeEventListener('sharedbufferreceived', onSharedBufferReceived);
     if (gpuAnimFrame) cancelAnimationFrame(gpuAnimFrame);
     gpuDevice?.destroy();
     if (obj) {
@@ -221,6 +247,20 @@
       log('✨ Check properties above - they should all be updated!', 'info');
     } catch (error) {
       log(`multiParamTest() failed: ${JSON.stringify(error)}`, 'error');
+    }
+  }
+
+  async function callTransferSingleFrame() {
+    if (!obj) {
+      log('No object!', 'error');
+      return;
+    }
+    try {
+      log('Calling transferSingleFrame()...', 'info');
+      await obj.transferSingleFrame();
+      log('transferSingleFrame() completed', 'success');
+    } catch (error) {
+      log(`transferSingleFrame() failed: ${error}`, 'error');
     }
   }
 
@@ -477,7 +517,7 @@
       <div class="card-body">
         <h2 class="card-title text-2xl">🎮 WebGPU Scene</h2>
         <div class="flex gap-2 mb-4">
-          <button class="btn btn-primary">Transfer single frame</button>
+          <button class="btn btn-primary" on:click={callTransferSingleFrame} disabled={obj === null}>Transfer single frame</button>
           <button class="btn btn-success">Begin video</button>
           <button class="btn btn-error">End video</button>
         </div>
@@ -487,6 +527,7 @@
           </div>
         {:else}
           <canvas bind:this={gpuCanvas} width="800" height="600" class="rounded-lg shadow-lg w-full"></canvas>
+		  <canvas bind:this={testCanvas} width="512" height="512" class="rounded-lg shadow-lg w-full"></canvas>
         {/if}
       </div>
     </div>

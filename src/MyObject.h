@@ -6,8 +6,8 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-struct Pod { 
-	unsigned a; unsigned long long b; 
+struct Pod {
+	unsigned a; unsigned long long b;
 	auto operator<=>(const Pod&) const = default;
 };
 
@@ -55,6 +55,12 @@ public:
 	[[async]] void file();
 
 	void testVectors();
+
+	void transferSingleFrame();
+
+	void startVideo();
+
+	void stopVideo();
 
 	void throwError();
 

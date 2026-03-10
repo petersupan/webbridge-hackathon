@@ -16,9 +16,19 @@ class object
 public:
 	template<typename T>
 	using property = impl::property<T>;
-	
+
 	template<typename... Args>
 	using event = impl::event<Args...>;
+
+	/// Called internally by the framework during object creation.
+	void _bind_webview(webview::webview* w) { m_webview = w; }
+
+protected:
+	/// Returns the webview instance this object is bound to.
+	webview::webview& get_webview() const { return *m_webview; }
+
+private:
+	webview::webview* m_webview = nullptr;
 };
 
 // =========================================
@@ -28,7 +38,7 @@ public:
 /**
  * Registers a type as instantiable from JavaScript.
  * Must be specialized for each type (see generated _registration.h files).
- * 
+ *
  * @param w WebView instance
  */
 template<typename T>
@@ -39,7 +49,7 @@ void register_type(webview::webview* w) {
 /**
  * Setzt die Anzahl der Worker-Threads im Thread-Pool.
  * MUSS vor dem ersten Async-Call aufgerufen werden!
- * 
+ *
  * @param num_threads Anzahl der Worker-Threads (0 = auto = CPU-Kerne)
  */
 inline void set_thread_pool_size(size_t num_threads) {

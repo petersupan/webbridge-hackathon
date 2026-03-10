@@ -3,6 +3,9 @@ find_package(nlohmann_json REQUIRED)
 find_package(httplib REQUIRED)
 find_package(portable-file-dialogs REQUIRED)
 
+# WebView2 SDK >= 1.0.1661.34 required for Shared Buffer API
+set(WEBVIEW_MSWEBVIEW2_VERSION "1.0.2792.45" CACHE STRING "MS WebView2 version" FORCE)
+
 FetchContent_Declare(
 	webview
 	GIT_REPOSITORY https://github.com/webview/webview
