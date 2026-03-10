@@ -62,7 +62,60 @@
     }
   }
 
+  // ============ WEBGPU ============
+  let gpuCanvas: HTMLCanvasElement;
+  let gpuDevice: GPUDevice | null = null;
+  let gpuContext: GPUCanvasContext | null = null;
+  let gpuError: string | null = null;
+  let gpuAnimFrame: number = 0;
+
+  async function initWebGPU() {
+    if (!navigator.gpu) {
+      gpuError = 'WebGPU is not supported in this browser.';
+      return;
+    }
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) { gpuError = 'No GPU adapter found.'; return; }
+      const device = await adapter.requestDevice();
+      gpuDevice = device;
+
+      const ctx = gpuCanvas.getContext('webgpu');
+      if (!ctx) { gpuError = 'Failed to get WebGPU context.'; return; }
+      gpuContext = ctx;
+
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+      function frame() {
+        if (!gpuDevice || !gpuContext) return;
+        const commandEncoder = gpuDevice.createCommandEncoder();
+        const textureView = gpuContext.getCurrentTexture().createView();
+        const passEncoder = commandEncoder.beginRenderPass({
+          colorAttachments: [{
+            view: textureView,
+            clearValue: { r: 0, g: 1, b: 0, a: 1 }, // green
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+        });
+        passEncoder.end();
+        gpuDevice.queue.submit([commandEncoder.finish()]);
+        gpuAnimFrame = requestAnimationFrame(frame);
+      }
+      gpuAnimFrame = requestAnimationFrame(frame);
+    } catch (e: any) {
+      gpuError = `WebGPU init failed: ${e.message ?? e}`;
+    }
+  }
+
+  onMount(() => {
+    initWebGPU();
+  });
+
   onDestroy(() => {
+    if (gpuAnimFrame) cancelAnimationFrame(gpuAnimFrame);
+    gpuDevice?.destroy();
     if (obj) {
       obj.destroy();
     }
@@ -133,7 +186,7 @@
       log('No object!', 'error');
       return;
     }
-    
+
     try {
       log('Calling throwError()...', 'info');
       await obj.throwError();
@@ -151,9 +204,9 @@
       log('No object!', 'error');
       return;
     }
-    
+
     await obj.bar();
-    
+
     try {
       log('Calling multiParamTest() with 6 different parameter types...', 'info');
       const result = await obj.multiParamTest(
@@ -177,7 +230,7 @@
   }
 
   // ============ BENCHMARK FUNCTIONALITY ============
-  
+
   interface BenchmarkStats {
     min: number;
     max: number;
@@ -195,7 +248,7 @@
     const max = Math.max(...values);
     const total = values.reduce((a, b) => a + b, 0);
     const avg = total / values.length;
-    
+
     // Standard deviation
     const variance = values.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / values.length;
     const stdev = Math.sqrt(variance);
@@ -206,7 +259,7 @@
   async function runBenchmark() {
     try {
       log('=== STARTING BENCHMARK ===', 'info');
-      
+
       // Create TestObject
       log('Creating TestObject...', 'info');
       const testObj = await TestObject.create() as TestObject;
@@ -218,7 +271,7 @@
 
       // ===== SYNC BENCHMARK =====
       log(`\n--- Sync Benchmark (${iterations} iterations) ---`, 'info');
-      
+
       // Warmup
       for (let i = 0; i < warmupRuns; i++) {
         await testObj.benchmarkSync(i);
@@ -242,7 +295,7 @@
 
       // ===== ASYNC BENCHMARK =====
       log(`\n--- Async Benchmark (${iterations} iterations) ---`, 'info');
-      
+
       // Warmup
       for (let i = 0; i < warmupRuns; i++) {
         await testObj.benchmarkAsync(i);
@@ -293,7 +346,7 @@
         <h1 class="card-title text-4xl font-bold text-center justify-center mb-4">
           🌉 WebBridge Svelte Demo
         </h1>
-        
+
         <!-- Status Badge -->
         <div class="flex justify-center mb-4">
           {#if obj !== null}
@@ -349,7 +402,7 @@
     <div class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
         <h2 class="card-title text-2xl">Properties (auto-synced via WebBridge)</h2>
-        
+
         {#if obj && aBool && strProp && counter && numbers && status && pod}
           <div class="grid gap-3">
             <div class="stats shadow">
@@ -358,28 +411,28 @@
                 <div class="stat-value text-primary text-2xl">{$aBool}</div>
               </div>
             </div>
-            
+
             <div class="stats shadow">
               <div class="stat">
                 <div class="stat-title">strProp</div>
                 <div class="stat-value text-secondary text-2xl font-mono">{$strProp || '(empty)'}</div>
               </div>
             </div>
-            
+
             <div class="stats shadow">
               <div class="stat">
                 <div class="stat-title">counter</div>
                 <div class="stat-value text-accent text-2xl">{$counter}</div>
               </div>
             </div>
-            
+
             <div class="stats shadow">
               <div class="stat">
                 <div class="stat-title">numbers</div>
                 <div class="stat-value text-xl font-mono">[{$numbers ? $numbers.join(', ') : ''}]</div>
               </div>
             </div>
-            
+
             <div class="stats shadow">
               <div class="stat">
                 <div class="stat-title">status</div>
@@ -398,7 +451,7 @@
                 </div>
               </div>
             </div>
-            
+
             {#if $pod}
             <div class="stats shadow">
               <div class="stat">
@@ -415,6 +468,25 @@
             </svg>
             <span>No object created yet.</span>
           </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- WebGPU Section -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+      <div class="card-body">
+        <h2 class="card-title text-2xl">🎮 WebGPU Scene</h2>
+        <div class="flex gap-2 mb-4">
+          <button class="btn btn-primary">Transfer single frame</button>
+          <button class="btn btn-success">Begin video</button>
+          <button class="btn btn-error">End video</button>
+        </div>
+        {#if gpuError}
+          <div class="alert alert-error">
+            <span>{gpuError}</span>
+          </div>
+        {:else}
+          <canvas bind:this={gpuCanvas} width="800" height="600" class="rounded-lg shadow-lg w-full"></canvas>
         {/if}
       </div>
     </div>
