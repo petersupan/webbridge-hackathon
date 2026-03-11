@@ -3,6 +3,7 @@
 #include "webbridge/impl/send_frame.h"
 #include <chrono>
 #include <cstring>
+#include <math.h>
 
 static int frameNr = 0;
 
@@ -74,9 +75,9 @@ void MyObject::startVideo()
 		constexpr int srcHeight = 4096;
 		std::vector<BYTE> srcImage(srcWidth * srcHeight * 4);
 		for (int i = 0; i < srcWidth * srcHeight; i++) {
-			srcImage[i * 4]     = rand() % 256;
-			srcImage[i * 4 + 1] = (i * 100) % 255;
-			srcImage[i * 4 + 2] = rand() % 256;
+			srcImage[i * 4]     = static_cast<BYTE>(sin((i %1024) / 100.0) * 127.0 + 128.0);
+			srcImage[i * 4 + 1] = (i /1024) % 255;
+			srcImage[i * 4 + 2] = static_cast<BYTE>((sin((i %1024) / 100.0) * cos(i/65536.0) ) * 127.0 + 128.0);
 			srcImage[i * 4 + 3] = 255;
 		}
 
