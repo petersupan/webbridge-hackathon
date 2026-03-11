@@ -68,6 +68,7 @@
   let gpuContext: GPUCanvasContext | null = null;
   let gpuError: string | null = null;
   let gpuAnimFrame: number = 0;
+  let renderFrame: (() => void) | null = null;
   let gpuCanvasFormat: GPUTextureFormat = 'bgra8unorm';
 
   // Pipeline & bind-group layout for fullscreen-quad texture blit
@@ -157,8 +158,9 @@
         minFilter: 'linear',
       });
 
-      // Render loop
-      function frame() {
+      // Render on demand – called only when a new frame is available
+      renderFrame = () => {
+        gpuAnimFrame = 0;
         if (!gpuDevice || !gpuContext || !gpuPipeline) return;
         const commandEncoder = gpuDevice.createCommandEncoder();
         const textureView = gpuContext.getCurrentTexture().createView();
@@ -180,9 +182,7 @@
 
         passEncoder.end();
         gpuDevice.queue.submit([commandEncoder.finish()]);
-        gpuAnimFrame = requestAnimationFrame(frame);
-      }
-      gpuAnimFrame = requestAnimationFrame(frame);
+      };
     } catch (e: any) {
       gpuError = `WebGPU init failed: ${e.message ?? e}`;
     }
@@ -226,6 +226,11 @@
     );
 
     hasFrame = true;
+
+    // Schedule a single render – no-op if one is already queued
+    if (renderFrame && !gpuAnimFrame) {
+      gpuAnimFrame = requestAnimationFrame(renderFrame);
+    }
   }
 
   let frameCount = 0;
