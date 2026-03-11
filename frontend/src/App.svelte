@@ -198,7 +198,7 @@
       gpuFrameTexture = gpuDevice.createTexture({
         size: [width, height],
         format: 'rgba8unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
       gpuFrameWidth = width;
       gpuFrameHeight = height;
