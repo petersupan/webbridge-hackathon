@@ -64,11 +64,50 @@
 
   // ============ WEBGPU ============
   let gpuCanvas: HTMLCanvasElement;
-  let testCanvas: HTMLCanvasElement;
   let gpuDevice: GPUDevice | null = null;
   let gpuContext: GPUCanvasContext | null = null;
   let gpuError: string | null = null;
   let gpuAnimFrame: number = 0;
+  let gpuCanvasFormat: GPUTextureFormat = 'bgra8unorm';
+
+  // Pipeline & bind-group layout for fullscreen-quad texture blit
+  let gpuPipeline: GPURenderPipeline | null = null;
+  let gpuSampler: GPUSampler | null = null;
+  let gpuBindGroupLayout: GPUBindGroupLayout | null = null;
+
+  // Current frame texture + bind group (recreated when resolution changes)
+  let gpuFrameTexture: GPUTexture | null = null;
+  let gpuFrameBindGroup: GPUBindGroup | null = null;
+  let gpuFrameWidth = 0;
+  let gpuFrameHeight = 0;
+  let hasFrame = false;
+
+  // WGSL shaders – fullscreen triangle + texture sampling
+  const FULLSCREEN_WGSL = /* wgsl */ `
+    struct VSOut {
+      @builtin(position) pos: vec4f,
+      @location(0) uv: vec2f,
+    };
+
+    @vertex
+    fn vs(@builtin(vertex_index) vi: u32) -> VSOut {
+      // Generate a fullscreen triangle (3 verts, no vertex buffer)
+      var out: VSOut;
+      let x = f32(i32(vi & 1u)) * 4.0 - 1.0;
+      let y = f32(i32(vi >> 1u)) * 4.0 - 1.0;
+      out.pos = vec4f(x, y, 0.0, 1.0);
+      out.uv  = vec2f((x + 1.0) * 0.5, (1.0 - y) * 0.5);
+      return out;
+    }
+
+    @group(0) @binding(0) var frameSampler: sampler;
+    @group(0) @binding(1) var frameTexture: texture_2d<f32>;
+
+    @fragment
+    fn fs(in: VSOut) -> @location(0) vec4f {
+      return textureSample(frameTexture, frameSampler, in.uv);
+    }
+  `;
 
   async function initWebGPU() {
     if (!navigator.gpu) {
@@ -85,21 +124,60 @@
       if (!ctx) { gpuError = 'Failed to get WebGPU context.'; return; }
       gpuContext = ctx;
 
-      const format = navigator.gpu.getPreferredCanvasFormat();
-      ctx.configure({ device, format, alphaMode: 'premultiplied' });
+      gpuCanvasFormat = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format: gpuCanvasFormat, alphaMode: 'premultiplied' });
 
+      // Bind group layout: sampler + texture
+      gpuBindGroupLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        ],
+      });
+
+      const pipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [gpuBindGroupLayout],
+      });
+
+      const shaderModule = device.createShaderModule({ code: FULLSCREEN_WGSL });
+
+      gpuPipeline = device.createRenderPipeline({
+        layout: pipelineLayout,
+        vertex:   { module: shaderModule, entryPoint: 'vs' },
+        fragment: {
+          module: shaderModule,
+          entryPoint: 'fs',
+          targets: [{ format: gpuCanvasFormat }],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
+
+      gpuSampler = device.createSampler({
+        magFilter: 'linear',
+        minFilter: 'linear',
+      });
+
+      // Render loop
       function frame() {
-        if (!gpuDevice || !gpuContext) return;
+        if (!gpuDevice || !gpuContext || !gpuPipeline) return;
         const commandEncoder = gpuDevice.createCommandEncoder();
         const textureView = gpuContext.getCurrentTexture().createView();
+
         const passEncoder = commandEncoder.beginRenderPass({
           colorAttachments: [{
             view: textureView,
-            clearValue: { r: 0, g: 1, b: 0, a: 1 }, // green
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
             loadOp: 'clear',
             storeOp: 'store',
           }],
         });
+
+        if (hasFrame && gpuFrameBindGroup) {
+          passEncoder.setPipeline(gpuPipeline);
+          passEncoder.setBindGroup(0, gpuFrameBindGroup);
+          passEncoder.draw(3); // fullscreen triangle
+        }
+
         passEncoder.end();
         gpuDevice.queue.submit([commandEncoder.finish()]);
         gpuAnimFrame = requestAnimationFrame(frame);
@@ -110,22 +188,52 @@
     }
   }
 
+  /** Upload RGBA pixel data as a GPU texture and trigger rendering. */
+  function uploadFrameToGPU(pixels: Uint8Array, width: number, height: number) {
+    if (!gpuDevice || !gpuBindGroupLayout || !gpuSampler) return;
+
+    // Recreate texture if resolution changed
+    if (!gpuFrameTexture || gpuFrameWidth !== width || gpuFrameHeight !== height) {
+      gpuFrameTexture?.destroy();
+      gpuFrameTexture = gpuDevice.createTexture({
+        size: [width, height],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      gpuFrameWidth = width;
+      gpuFrameHeight = height;
+
+      // Rebuild bind group for new texture
+      gpuFrameBindGroup = gpuDevice.createBindGroup({
+        layout: gpuBindGroupLayout,
+        entries: [
+          { binding: 0, resource: gpuSampler },
+          { binding: 1, resource: gpuFrameTexture.createView() },
+        ],
+      });
+
+      // Match canvas resolution to frame
+      gpuCanvas.width = width;
+      gpuCanvas.height = height;
+    }
+
+    // Upload pixel data
+    gpuDevice.queue.writeTexture(
+      { texture: gpuFrameTexture },
+      pixels,
+      { bytesPerRow: width * 4, rowsPerImage: height },
+      [width, height],
+    );
+
+    hasFrame = true;
+  }
+
   function onSharedBufferReceived(event: any) {
     const meta = event.additionalData;
     const buffer = event.getBuffer();
     const pixels = new Uint8Array(buffer, 0, meta.byteLength);
 
-    // TODO: Bilddaten verarbeiten, z.B. auf Canvas zeichnen:
-    const imageData = new ImageData(
-      new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength),
-      meta.width, meta.height
-    );
-    const ctx = testCanvas.getContext('2d');
-    if (ctx) {
-      testCanvas.width = meta.width;
-      testCanvas.height = meta.height;
-      ctx.putImageData(imageData, 0, 0);
-    }
+    uploadFrameToGPU(pixels, meta.width, meta.height);
 
     log(`SharedBuffer received: ${meta.width}x${meta.height} ${meta.format} (${meta.byteLength} bytes)`, 'info');
 
@@ -261,6 +369,28 @@
       log('transferSingleFrame() completed', 'success');
     } catch (error) {
       log(`transferSingleFrame() failed: ${error}`, 'error');
+    }
+  }
+
+  async function callStartVideo() {
+    if (!obj) { log('No object!', 'error'); return; }
+    try {
+      log('Starting video...', 'info');
+      await obj.startVideo();
+      log('Video started', 'success');
+    } catch (error) {
+      log(`startVideo() failed: ${error}`, 'error');
+    }
+  }
+
+  async function callStopVideo() {
+    if (!obj) { log('No object!', 'error'); return; }
+    try {
+      log('Stopping video...', 'info');
+      await obj.stopVideo();
+      log('Video stopped', 'success');
+    } catch (error) {
+      log(`stopVideo() failed: ${error}`, 'error');
     }
   }
 
@@ -518,8 +648,8 @@
         <h2 class="card-title text-2xl">🎮 WebGPU Scene</h2>
         <div class="flex gap-2 mb-4">
           <button class="btn btn-primary" on:click={callTransferSingleFrame} disabled={obj === null}>Transfer single frame</button>
-          <button class="btn btn-success">Begin video</button>
-          <button class="btn btn-error">End video</button>
+          <button class="btn btn-success" on:click={callStartVideo} disabled={obj === null}>Begin video</button>
+          <button class="btn btn-error" on:click={callStopVideo} disabled={obj === null}>End video</button>
         </div>
         {#if gpuError}
           <div class="alert alert-error">
@@ -527,7 +657,6 @@
           </div>
         {:else}
           <canvas bind:this={gpuCanvas} width="800" height="600" class="rounded-lg shadow-lg w-full"></canvas>
-		  <canvas bind:this={testCanvas} width="512" height="512" class="rounded-lg shadow-lg w-full"></canvas>
         {/if}
       </div>
     </div>

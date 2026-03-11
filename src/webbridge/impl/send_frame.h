@@ -64,6 +64,7 @@ public:
 
     /**
      * Sends frame data to JavaScript via a shared buffer.
+     * All-in-one convenience method (must be called from the main thread).
      *
      * @param frameData  Pointer to the raw pixel data
      * @param dataSize   Size in bytes
@@ -75,7 +76,17 @@ public:
               uint32_t width, uint32_t height,
               const std::string& format = "RGBA")
     {
-        // Re-create the shared buffer only if the size changed
+        ensureBuffer(dataSize);
+        std::memcpy(bufferPtr(), frameData, dataSize);
+        post(width, height, format);
+    }
+
+    /**
+     * Ensures the shared buffer is at least @p dataSize bytes.
+     * Must be called from the main thread (COM call).
+     */
+    void ensureBuffer(size_t dataSize)
+    {
         if (!m_sharedBuffer || m_bufferSize != dataSize) {
             m_sharedBuffer.Reset();
             HRESULT hr = m_env12->CreateSharedBuffer(
@@ -84,21 +95,36 @@ public:
                 throw std::runtime_error("CreateSharedBuffer failed");
             }
             m_bufferSize = dataSize;
+            m_sharedBuffer->get_Buffer(&m_bufferPtr);
         }
+    }
 
-        // Copy pixel data into the shared buffer
-        BYTE* bufferData = nullptr;
-        m_sharedBuffer->get_Buffer(&bufferData);
-        std::memcpy(bufferData, frameData, dataSize);
+    /**
+     * Returns a raw pointer into the shared buffer memory.
+     * Thread-safe once ensureBuffer() has been called.
+     * The caller may write up to bufferSize() bytes.
+     */
+    BYTE* bufferPtr() const { return m_bufferPtr; }
 
-        // Build metadata JSON to send alongside the buffer
+    /**
+     * Returns the current buffer size in bytes.
+     */
+    size_t bufferSize() const { return m_bufferSize; }
+
+    /**
+     * Posts the shared buffer to JavaScript.
+     * Must be called from the main thread (COM call).
+     * Call this after writing frame data into bufferPtr().
+     */
+    void post(uint32_t width, uint32_t height,
+              const std::string& format = "RGBA")
+    {
         std::wstring meta = L"{\"width\":" + std::to_wstring(width)
             + L",\"height\":" + std::to_wstring(height)
             + L",\"format\":\"" + std::wstring(format.begin(), format.end()) + L"\""
-            + L",\"byteLength\":" + std::to_wstring(dataSize)
+            + L",\"byteLength\":" + std::to_wstring(m_bufferSize)
             + L"}";
 
-        // Post the buffer to JavaScript (read-only access for the renderer)
         m_wv17->PostSharedBufferToScript(
             m_sharedBuffer.Get(),
             COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY,
@@ -112,4 +138,5 @@ private:
     ComPtr<ICoreWebView2_17>                m_wv17;
     ComPtr<ICoreWebView2SharedBuffer>       m_sharedBuffer;
     size_t                                  m_bufferSize = 0;
+    BYTE*                                   m_bufferPtr = nullptr;
 };

@@ -4,6 +4,8 @@
 
 #include <string>
 #include <vector>
+#include <thread>
+#include <atomic>
 #include <nlohmann/json.hpp>
 
 struct Pod {
@@ -45,7 +47,7 @@ public:
 public:
 	explicit MyObject(const std::string& version_) : version(version_) {}
 	virtual ~MyObject() {
-		std::ignore = 6;
+		stopVideo();
 	}
 
 	[[async]] void foo(const std::string& val);
@@ -61,6 +63,10 @@ public:
 	void startVideo();
 
 	void stopVideo();
+
+private:
+	std::atomic<bool> videoRunning_{ false };
+	std::thread videoThread_;
 
 	void throwError();
 

@@ -1,6 +1,9 @@
 #include "MyObject.h"
 #include <portable-file-dialogs.h>
 #include "webbridge/impl/send_frame.h"
+#include <chrono>
+
+static int frameNr = 0;
 
 void MyObject::foo(const std::string& val)
 {
@@ -37,13 +40,13 @@ void MyObject::testVectors()
 
 void MyObject::transferSingleFrame()
 {
-
+	frameNr++;
 	std::vector<uint8_t> imgdat;
 	imgdat.resize(1024*1024*4);
 	for(int i = 0; i < 1024*1024; i++) {
-		imgdat[i*4] = 255;
-		imgdat[i*4+1] = i%255;
-		imgdat[i*4+2] = (i / 255) % 255;
+		imgdat[i*4] = rand() % 256;
+		imgdat[i*4+1] = (i+frameNr*10)%255;
+		imgdat[i*4+2] = rand() % 256;
 		imgdat[i*4+3] = 255;
 	}
 	SharedFrameSender sender(get_webview());
@@ -52,12 +55,56 @@ void MyObject::transferSingleFrame()
 
 void MyObject::startVideo()
 {
+	stopVideo();
+	videoRunning_ = true;
 
+	// Create sender & pre-allocate shared buffer on the main thread (COM requirement)
+	auto sender = std::make_shared<SharedFrameSender>(get_webview());
+	constexpr size_t dataSize = 1024 * 1024 * 4;
+	sender->ensureBuffer(dataSize);
+
+	videoThread_ = std::thread([this, sender]() {
+		frameNr = 0;
+		while (videoRunning_) {
+
+			// Write directly into the shared buffer (thread-safe raw memcpy)
+			BYTE* buf = sender->bufferPtr();
+			if (frameNr == 0) {
+
+				for (int i = 0; i < 1024 * 1024; i++) {
+					buf[i * 4]     = rand() % 256;
+					buf[i * 4 + 1] = (i + frameNr * 10) % 255;
+					buf[i * 4 + 2] = rand() % 256;
+					buf[i * 4 + 3] = 255;
+				}
+			} else {
+				for (int i = 0; i < 100 * 100; i++) {
+					buf[i * 4]     = rand() % 256;
+					buf[i * 4 + 1] = (i + frameNr * 10) % 255;
+					buf[i * 4 + 2] = rand() % 256;
+					buf[i * 4 + 3] = 255;
+				}
+			}
+			//buf[4096 * 4 + 400] = frameNr % 255;
+
+			// Post to JS on the main thread (COM requirement)
+			get_webview().dispatch([sender]() {
+				sender->post(1024, 1024);
+			});
+			frameNr++;
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		}
+
+	});
 }
 
 void MyObject::stopVideo()
 {
-
+	videoRunning_ = false;
+	if (videoThread_.joinable()) {
+		videoThread_.join();
+	}
 }
 
 void MyObject::throwError()
