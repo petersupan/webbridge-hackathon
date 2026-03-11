@@ -2,6 +2,7 @@
 #include <portable-file-dialogs.h>
 #include "webbridge/impl/send_frame.h"
 #include <chrono>
+#include <cstring>
 
 static int frameNr = 0;
 
@@ -65,27 +66,28 @@ void MyObject::startVideo()
 
 	videoThread_ = std::thread([this, sender]() {
 		frameNr = 0;
+
+		// Generate a 1024 x 4096 source image filled with nonsense data
+		constexpr int srcWidth = 1024;
+		constexpr int srcHeight = 4096;
+		std::vector<BYTE> srcImage(srcWidth * srcHeight * 4);
+		for (int i = 0; i < srcWidth * srcHeight; i++) {
+			srcImage[i * 4]     = rand() % 256;
+			srcImage[i * 4 + 1] = (i * 100) % 255;
+			srcImage[i * 4 + 2] = rand() % 256;
+			srcImage[i * 4 + 3] = 255;
+		}
+
 		while (videoRunning_) {
 
-			// Write directly into the shared buffer (thread-safe raw memcpy)
 			BYTE* buf = sender->bufferPtr();
-			if (frameNr == 0) {
 
-				for (int i = 0; i < 1024 * 1024; i++) {
-					buf[i * 4]     = rand() % 256;
-					buf[i * 4 + 1] = (i + frameNr * 10) % 255;
-					buf[i * 4 + 2] = rand() % 256;
-					buf[i * 4 + 3] = 255;
-				}
-			} else {
-				for (int i = 0; i < 100 * 100; i++) {
-					buf[i * 4]     = rand() % 256;
-					buf[i * 4 + 1] = (i + frameNr * 10) % 255;
-					buf[i * 4 + 2] = rand() % 256;
-					buf[i * 4 + 3] = 255;
-				}
-			}
-			//buf[4096 * 4 + 400] = frameNr % 255;
+			// Pick the starting row based on frameNr, wrapping so we stay in bounds
+			int startLine = frameNr % (srcHeight - srcWidth);  // 4096 - 1024 = 3072 usable offsets
+			size_t srcOffset = static_cast<size_t>(startLine) * srcWidth * 4;
+
+			// Copy 1024 * 1024 pixels from the source image into buf
+			std::memcpy(buf, srcImage.data() + srcOffset, srcWidth * srcWidth * 4);
 
 			// Post to JS on the main thread (COM requirement)
 			get_webview().dispatch([sender]() {
@@ -93,7 +95,7 @@ void MyObject::startVideo()
 			});
 			frameNr++;
 
-			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			std::this_thread::sleep_for(std::chrono::milliseconds(15));
 		}
 
 	});
