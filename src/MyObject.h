@@ -66,6 +66,7 @@ public:
 
 private:
 	std::atomic<bool> videoRunning_{ false };
+	std::atomic<bool> dispatchPending_{ false };
 	std::thread videoThread_;
 
 	void throwError();

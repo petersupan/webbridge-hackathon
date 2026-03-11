@@ -64,6 +64,8 @@ void MyObject::startVideo()
 	constexpr size_t dataSize = 1024 * 1024 * 4;
 	sender->ensureBuffer(dataSize);
 
+	dispatchPending_ = false;
+
 	videoThread_ = std::thread([this, sender]() {
 		frameNr = 0;
 
@@ -89,10 +91,17 @@ void MyObject::startVideo()
 			// Copy 1024 * 1024 pixels from the source image into buf
 			std::memcpy(buf, srcImage.data() + srcOffset, srcWidth * srcWidth * 4);
 
-			// Post to JS on the main thread (COM requirement)
-			get_webview().dispatch([sender]() {
-				sender->post(1024, 1024);
-			});
+			// Only dispatch if the previous post has been consumed.
+			// If still pending, skip this frame (latest data is already in the buffer).
+			// Only dispatch if the previous post has been consumed.
+			bool expected = false;
+			int currentFrame = frameNr;
+			if (dispatchPending_.compare_exchange_strong(expected, true)) {
+				get_webview().dispatch([this, sender, currentFrame]() {
+					sender->post(1024, 1024, "RGBA", currentFrame);
+					dispatchPending_.store(false, std::memory_order_release);
+				});
+			}
 			frameNr++;
 
 			std::this_thread::sleep_for(std::chrono::milliseconds(15));

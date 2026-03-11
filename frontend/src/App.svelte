@@ -228,6 +228,9 @@
     hasFrame = true;
   }
 
+  let frameCount = 0;
+  let lastFrameNr = -1;
+  let skippedTotal = 0;
   function onSharedBufferReceived(event: any) {
     const meta = event.additionalData;
     const buffer = event.getBuffer();
@@ -235,10 +238,20 @@
 
     uploadFrameToGPU(pixels, meta.width, meta.height);
 
-    log(`SharedBuffer received: ${meta.width}x${meta.height} ${meta.format} (${meta.byteLength} bytes)`, 'info');
+    // Track skipped frames via C++ frameNr in metadata
+    const cppFrameNr = meta.frameNr ?? -1;
+    if (lastFrameNr >= 0 && cppFrameNr > lastFrameNr + 1) {
+      skippedTotal += (cppFrameNr - lastFrameNr - 1);
+    }
+    lastFrameNr = cppFrameNr;
+
+    frameCount++;
+    if (frameCount % 60 === 0) {
+      log(`Received ${frameCount} frames, skipped ${skippedTotal} (C++ frame #${cppFrameNr})`, 'info');
+    }
 
     // Buffer nach Verwendung freigeben
-    event.source.close();
+    //event.source.close();
   }
 
   onMount(() => {

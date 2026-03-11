@@ -117,12 +117,13 @@ public:
      * Call this after writing frame data into bufferPtr().
      */
     void post(uint32_t width, uint32_t height,
-              const std::string& format = "RGBA")
+              const std::string& format = "RGBA", int frameNr = -1)
     {
         std::wstring meta = L"{\"width\":" + std::to_wstring(width)
             + L",\"height\":" + std::to_wstring(height)
             + L",\"format\":\"" + std::wstring(format.begin(), format.end()) + L"\""
             + L",\"byteLength\":" + std::to_wstring(m_bufferSize)
+            + L",\"frameNr\":" + std::to_wstring(frameNr)
             + L"}";
 
         m_wv17->PostSharedBufferToScript(
