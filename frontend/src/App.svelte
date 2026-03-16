@@ -72,6 +72,7 @@
   // WebGL2 resources
   let glProgram: WebGLProgram | null = null;
   let glTexture: WebGLTexture | null = null;
+  let glPbo: WebGLBuffer | null = null;
   let glTexWidth = 0;
   let glTexHeight = 0;
   let hasFrame = false;
@@ -149,27 +150,35 @@ void main() {
         gl.bindTexture(gl.TEXTURE_2D, glTexture);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       };
+
+      glPbo = gl.createBuffer();
     } catch (e: any) {
       glError = `WebGL2 init failed: ${e.message ?? e}`;
     }
   }
 
-  /** Upload RGBA pixel data as a GL texture and trigger rendering. */
+  /** Upload RGBA pixel data as a GL texture via PBO and trigger rendering. */
   function uploadFrameToGL(pixels: Uint8Array, width: number, height: number) {
-    if (!gl || !glTexture) return;
+    if (!gl || !glTexture || !glPbo) return;
+
+    // Copy pixel data into the PBO (async DMA to GPU, frees the main thread sooner)
+    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, glPbo);
+    gl.bufferData(gl.PIXEL_UNPACK_BUFFER, pixels, gl.STREAM_DRAW);
 
     gl.bindTexture(gl.TEXTURE_2D, glTexture);
 
     if (glTexWidth !== width || glTexHeight !== height) {
-      // Allocate new texture storage for the new resolution
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      // Last arg is a byte offset into the PBO (not a pointer)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, 0);
       glTexWidth = width;
       glTexHeight = height;
       glCanvas.width = width;
       glCanvas.height = height;
     } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
     }
+
+    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
 
     hasFrame = true;
 
