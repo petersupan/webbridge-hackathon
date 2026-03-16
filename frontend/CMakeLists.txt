@@ -151,6 +151,7 @@ add_dependencies(frontend_build npm_install webbridge_gen)
 set(FRONTEND_DIST_FILES
 	dist/assets/index.css
 	dist/assets/index.js
+	dist/assets/canvaskit.wasm
 	dist/index.html
 )
 

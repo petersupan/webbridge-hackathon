@@ -23,6 +23,7 @@
     "vite": "^7.2.4"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.18"
+    "@tailwindcss/vite": "^4.1.18",
+    "canvaskit-wasm": "^0.40.0"
   }
 }

@@ -5,6 +5,9 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
+  optimizeDeps: {
+    exclude: ['canvaskit-wasm'],
+  },
   build: {
     rollupOptions: {
       output: {

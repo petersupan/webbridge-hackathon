@@ -3,6 +3,8 @@
   import { MyObject } from './generated/MyObject';
   import { TestObject } from './generated/TestObject';
   import bildUrl from './assets/bild.jpg';
+  import canvaskitWasmUrl from 'canvaskit-wasm/bin/canvaskit.wasm?url';
+  import CanvasKitInit from 'canvaskit-wasm';
 
   // State
   let obj: MyObject | null = null;
@@ -62,155 +64,66 @@
     }
   }
 
-  // ============ WEBGL2 ============
+  // ============ CANVASKIT-SKIA ============
   let glCanvas: HTMLCanvasElement;
-  let gl: WebGL2RenderingContext | null = null;
+  let ck: any = null;         // CanvasKit instance
+  let ckSurface: any = null;  // CanvasKit surface
   let glError: string | null = null;
-  let glAnimFrame: number = 0;
-  let renderFrame: (() => void) | null = null;
-
-  // WebGL2 resources
-  let glProgram: WebGLProgram | null = null;
-  let glTexture: WebGLTexture | null = null;
-  // Double-buffered PBOs: CPU writes into glPbos[glPboWrite], GPU reads from the other
-  let glPbos: [WebGLBuffer | null, WebGLBuffer | null] = [null, null];
-  let glPboWrite = 0;    // index of the PBO being filled this frame
-  let glPboReady = false; // true once the alternate PBO contains valid data
   let glTexWidth = 0;
   let glTexHeight = 0;
   let hasFrame = false;
 
-  // GLSL shaders – fullscreen triangle (no vertex buffer) + texture sampling
-  const VERT_SRC = `#version 300 es
-out vec2 vUV;
-void main() {
-  float x = float(gl_VertexID & 1) * 4.0 - 1.0;
-  float y = float(gl_VertexID >> 1) * 4.0 - 1.0;
-  gl_Position = vec4(x, y, 0.0, 1.0);
-  vUV = vec2((x + 1.0) * 0.5, (1.0 - y) * 0.5);
-}`;
-
-  const FRAG_SRC = `#version 300 es
-precision mediump float;
-uniform sampler2D uTexture;
-in vec2 vUV;
-out vec4 fragColor;
-void main() {
-  fragColor = texture(uTexture, vUV);
-}`;
-
-  function compileShader(glCtx: WebGL2RenderingContext, type: number, src: string): WebGLShader {
-    const shader = glCtx.createShader(type)!;
-    glCtx.shaderSource(shader, src);
-    glCtx.compileShader(shader);
-    if (!glCtx.getShaderParameter(shader, glCtx.COMPILE_STATUS)) {
-      throw new Error(glCtx.getShaderInfoLog(shader) ?? 'Shader compile error');
-    }
-    return shader;
-  }
-
-  function initWebGL() {
-    const context = glCanvas.getContext('webgl2');
-    if (!context) {
-      glError = 'WebGL2 is not supported in this browser.';
-      return;
-    }
-    gl = context;
+  async function initCanvasKit() {
     try {
-      const vert = compileShader(gl, gl.VERTEX_SHADER, VERT_SRC);
-      const frag = compileShader(gl, gl.FRAGMENT_SHADER, FRAG_SRC);
-
-      const program = gl.createProgram()!;
-      gl.attachShader(program, vert);
-      gl.attachShader(program, frag);
-      gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error(gl.getProgramInfoLog(program) ?? 'Program link error');
+      ck = await CanvasKitInit({
+        locateFile: (file: string) => file.endsWith('.wasm') ? canvaskitWasmUrl : file,
+      });
+      ckSurface = ck.MakeWebGLCanvasSurface(glCanvas);
+      if (!ckSurface) {
+        ckSurface = ck.MakeSWCanvasSurface(glCanvas);
       }
-      gl.deleteShader(vert);
-      gl.deleteShader(frag);
-      glProgram = program;
-
-      gl.useProgram(glProgram);
-      gl.uniform1i(gl.getUniformLocation(glProgram, 'uTexture'), 0);
-
-      glTexture = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, glTexture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-      // Render on demand – called only when a new frame is available
-      renderFrame = () => {
-        glAnimFrame = 0;
-        if (!gl || !glProgram || !hasFrame) return;
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-        gl.clearColor(0, 0, 0, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.useProgram(glProgram);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, glTexture);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-      };
-
-      glPbos[0] = gl.createBuffer();
-      glPbos[1] = gl.createBuffer();
+      if (!ckSurface) {
+        glError = 'CanvasKit: failed to create a rendering surface.';
+      }
     } catch (e: any) {
-      glError = `WebGL2 init failed: ${e.message ?? e}`;
+      glError = `CanvasKit init failed: ${e.message ?? e}`;
     }
   }
 
-  /** Upload RGBA pixel data as a GL texture via double-buffered PBOs and trigger rendering.
-   *
-   * Each call writes new pixels into glPbos[glPboWrite] (the "write" PBO) while the GPU
-   * reads the texture update from glPbos[1-glPboWrite] (the "read" PBO filled last frame).
-   * This decouples the CPU memcpy from the GPU texture transfer, reducing stalls.
-   * On the first frame (or after a resolution change) both operations target the same PBO.
-   */
-  function uploadFrameToGL(pixels: Uint8Array, width: number, height: number) {
-    if (!gl || !glTexture || !glPbos[0] || !glPbos[1]) return;
+  /** Upload RGBA pixel data and draw it on the CanvasKit surface. */
+  function uploadFrameToCanvasKit(pixels: Uint8Array, width: number, height: number) {
+    if (!ck || !ckSurface) return;
 
     const resChanged = glTexWidth !== width || glTexHeight !== height;
-    const readIdx = 1 - glPboWrite;
-
-    // --- Step 1: fill the write PBO with new pixel data ---
-    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, glPbos[glPboWrite]);
-    gl.bufferData(gl.PIXEL_UNPACK_BUFFER, pixels, gl.STREAM_DRAW);
-
-    // --- Step 2: update the texture from the read PBO (prev frame's data) ---
-    // Fall back to the write PBO on the first frame or after a resolution change,
-    // because the read PBO either doesn't exist yet or has stale dimensions.
-    gl.bindBuffer(
-      gl.PIXEL_UNPACK_BUFFER,
-      (glPboReady && !resChanged) ? glPbos[readIdx] : glPbos[glPboWrite],
-    );
-
-    gl.bindTexture(gl.TEXTURE_2D, glTexture);
     if (resChanged) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, 0);
-      glTexWidth = width;
-      glTexHeight = height;
       glCanvas.width = width;
       glCanvas.height = height;
-      // Reset: the alternate PBO has wrong-sized data, so force single-PBO next frame too
-      glPboReady = false;
-    } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
-      glPboReady = true; // write PBO now holds valid data for the next frame's read
+      glTexWidth = width;
+      glTexHeight = height;
+      // Recreate the surface to match the new canvas dimensions
+      ckSurface.delete();
+      ckSurface = ck.MakeWebGLCanvasSurface(glCanvas) ?? ck.MakeSWCanvasSurface(glCanvas);
+      if (!ckSurface) return;
     }
 
-    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+    const img = ck.MakeImage(
+      {
+        width,
+        height,
+        alphaType: ck.AlphaType.Unpremul,
+        colorType: ck.ColorType.RGBA_8888,
+        colorSpace: ck.ColorSpace.SRGB,
+      },
+      pixels,
+      width * 4,
+    );
+    if (!img) return;
 
-    // Advance the ping-pong index
-    glPboWrite = 1 - glPboWrite;
-
+    const skCanvas = ckSurface.getCanvas();
+    skCanvas.drawImage(img, 0, 0, null);
+    img.delete();
+    ckSurface.flush();
     hasFrame = true;
-
-    // Schedule a single render – no-op if one is already queued
-    if (renderFrame && !glAnimFrame) {
-      glAnimFrame = requestAnimationFrame(renderFrame);
-    }
   }
 
   let frameCount = 0;
@@ -221,7 +134,7 @@ void main() {
     const buffer = event.getBuffer();
     const pixels = new Uint8Array(buffer, 0, meta.byteLength);
 
-    uploadFrameToGL(pixels, meta.width, meta.height);
+    uploadFrameToCanvasKit(pixels, meta.width, meta.height);
 
     // Track skipped frames via C++ frameNr in metadata
     const cppFrameNr = meta.frameNr ?? -1;
@@ -240,13 +153,13 @@ void main() {
   }
 
   onMount(() => {
-    initWebGL();
+    initCanvasKit();
     (window as any).chrome?.webview?.addEventListener('sharedbufferreceived', onSharedBufferReceived);
   });
 
   onDestroy(() => {
     (window as any).chrome?.webview?.removeEventListener('sharedbufferreceived', onSharedBufferReceived);
-    if (glAnimFrame) cancelAnimationFrame(glAnimFrame);
+    if (ckSurface) { ckSurface.delete(); ckSurface = null; }
     if (obj) {
       obj.destroy();
     }

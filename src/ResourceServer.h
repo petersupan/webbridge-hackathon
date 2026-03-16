@@ -25,9 +25,10 @@ inline std::string get_mime_type(const std::string& path) {
 		{".woff", "font/woff"},
 		{".woff2", "font/woff2"},
 		{".ttf", "font/ttf"},
-		{".eot", "application/vnd.ms-fontobject"}
+		{".eot", "application/vnd.ms-fontobject"},
+		{".wasm", "application/wasm"}
 	};
-	
+
 	auto dot_pos = path.find_last_of('.');
 	if (dot_pos != std::string::npos) {
 		std::string ext = path.substr(dot_pos);
@@ -43,7 +44,7 @@ inline std::string get_mime_type(const std::string& path) {
 class ResourceServer {
 public:
 	ResourceServer() : running_(false), port_(0) {}
-	
+
 	bool start() {
 		auto fs = cmrc::frontend::get_filesystem();
 		server_.Get("/.*", [fs](const httplib::Request& req, httplib::Response& res) {
@@ -56,12 +57,12 @@ public:
 			if (!path.empty() && path[0] == '/') {
 				path = path.substr(1);
 			}
-			
+
 			try {
 				if (fs.exists(path)) {
 					auto file = fs.open(path);
 					std::string content(file.begin(), file.end());
-					
+
 					res.set_content(content, get_mime_type(path));
 				} else {
 					res.status = 404;
@@ -83,10 +84,10 @@ public:
 		server_thread_ = std::thread([this]() {
 			server_.listen_after_bind();
 		});
-		
+
 		return true;
 	}
-	
+
 	void stop() {
 		if (running_) {
 			running_ = false;
@@ -96,17 +97,17 @@ public:
 			}
 		}
 	}
-	
+
 	int get_port() const { return port_; }
-	
+
 	std::string get_url() const {
 		return "http://127.0.0.1:" + std::to_string(port_);
 	}
-	
+
 	~ResourceServer() {
 		stop();
 	}
-	
+
 private:
 	httplib::Server server_;
 	std::thread server_thread_;
