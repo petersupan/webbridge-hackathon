@@ -72,7 +72,10 @@
   // WebGL2 resources
   let glProgram: WebGLProgram | null = null;
   let glTexture: WebGLTexture | null = null;
-  let glPbo: WebGLBuffer | null = null;
+  // Double-buffered PBOs: CPU writes into glPbos[glPboWrite], GPU reads from the other
+  let glPbos: [WebGLBuffer | null, WebGLBuffer | null] = [null, null];
+  let glPboWrite = 0;    // index of the PBO being filled this frame
+  let glPboReady = false; // true once the alternate PBO contains valid data
   let glTexWidth = 0;
   let glTexHeight = 0;
   let hasFrame = false;
@@ -151,34 +154,56 @@ void main() {
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       };
 
-      glPbo = gl.createBuffer();
+      glPbos[0] = gl.createBuffer();
+      glPbos[1] = gl.createBuffer();
     } catch (e: any) {
       glError = `WebGL2 init failed: ${e.message ?? e}`;
     }
   }
 
-  /** Upload RGBA pixel data as a GL texture via PBO and trigger rendering. */
+  /** Upload RGBA pixel data as a GL texture via double-buffered PBOs and trigger rendering.
+   *
+   * Each call writes new pixels into glPbos[glPboWrite] (the "write" PBO) while the GPU
+   * reads the texture update from glPbos[1-glPboWrite] (the "read" PBO filled last frame).
+   * This decouples the CPU memcpy from the GPU texture transfer, reducing stalls.
+   * On the first frame (or after a resolution change) both operations target the same PBO.
+   */
   function uploadFrameToGL(pixels: Uint8Array, width: number, height: number) {
-    if (!gl || !glTexture || !glPbo) return;
+    if (!gl || !glTexture || !glPbos[0] || !glPbos[1]) return;
 
-    // Copy pixel data into the PBO (async DMA to GPU, frees the main thread sooner)
-    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, glPbo);
+    const resChanged = glTexWidth !== width || glTexHeight !== height;
+    const readIdx = 1 - glPboWrite;
+
+    // --- Step 1: fill the write PBO with new pixel data ---
+    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, glPbos[glPboWrite]);
     gl.bufferData(gl.PIXEL_UNPACK_BUFFER, pixels, gl.STREAM_DRAW);
 
-    gl.bindTexture(gl.TEXTURE_2D, glTexture);
+    // --- Step 2: update the texture from the read PBO (prev frame's data) ---
+    // Fall back to the write PBO on the first frame or after a resolution change,
+    // because the read PBO either doesn't exist yet or has stale dimensions.
+    gl.bindBuffer(
+      gl.PIXEL_UNPACK_BUFFER,
+      (glPboReady && !resChanged) ? glPbos[readIdx] : glPbos[glPboWrite],
+    );
 
-    if (glTexWidth !== width || glTexHeight !== height) {
-      // Last arg is a byte offset into the PBO (not a pointer)
+    gl.bindTexture(gl.TEXTURE_2D, glTexture);
+    if (resChanged) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, 0);
       glTexWidth = width;
       glTexHeight = height;
       glCanvas.width = width;
       glCanvas.height = height;
+      // Reset: the alternate PBO has wrong-sized data, so force single-PBO next frame too
+      glPboReady = false;
     } else {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+      glPboReady = true; // write PBO now holds valid data for the next frame's read
     }
 
     gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+
+    // Advance the ping-pong index
+    glPboWrite = 1 - glPboWrite;
 
     hasFrame = true;
 
