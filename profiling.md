@@ -66,6 +66,7 @@ Latenz ca. 15-20ms.
 
 ca. 2-3ms pro übertragenem Bild in einem Thread
 Latenz ca. 10-20ms
+Ein frame mehr latenz bei double buffered pbuffer.
 
 ### Direkt mit Skia
 
